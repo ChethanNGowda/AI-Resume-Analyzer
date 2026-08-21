@@ -6,5 +6,7 @@ health_bp = Blueprint("health", __name__)
 def health_check():
     return {
         "status": "ok",
-        "message": "Backend is healthy"
+        "message": "Backend is healthy",
+        "service": "ResumeNova API",
+        "version": "2.0",
     }
