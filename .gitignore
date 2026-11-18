@@ -19,6 +19,10 @@ build/
 backend/uploads/
 backend/uploads
 uploads/
+backend/data/chroma/
+backend/data/chroma
+data/chroma/
+*.chroma
 
 # Logs and local diagnostics
 *.log

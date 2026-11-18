@@ -6,6 +6,7 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:500
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", mark: "D" },
+  { id: "assistant", label: "AI Assistant", mark: "C" },
   { id: "interviews", label: "Mock Interviews", mark: "M" },
   { id: "analyzer", label: "Resume Analyzer", mark: "A" },
   { id: "jobs", label: "Jobs", mark: "J" },
@@ -72,6 +73,21 @@ function App() {
   const [uploadCount, setUploadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // RAG AI Assistant state
+  const [chatMessages, setChatMessages] = useState([
+    {
+      id: "intro",
+      role: "assistant",
+      text: "Hello! I am ResumeNova's AI Career Assistant. I am grounded in your uploaded resume and vetted career knowledge. Ask me about your technical skills, education, projects, interview questions, or job description matches!",
+      citations: [],
+    },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatContext, setChatContext] = useState("auto");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [ragStatus, setRagStatus] = useState(null);
+  const [ragSources, setRagSources] = useState({ resumes: [], jobs: [] });
 
   useEffect(() => {
     const saved = localStorage.getItem("resumeAppState");
@@ -152,6 +168,84 @@ function App() {
 
     verifySavedProfile();
   }, [user?.username, user?.profile_verified]);
+
+  useEffect(() => {
+    const fetchRagInfo = async () => {
+      try {
+        const userId = user?.username || "guest";
+        const [statusRes, sourcesRes] = await Promise.all([
+          axios.get(`${API_BASE_URL}/api/rag/status`, { headers: { "X-User-Id": userId } }),
+          axios.get(`${API_BASE_URL}/api/rag/sources`, { headers: { "X-User-Id": userId } }),
+        ]);
+        setRagStatus(statusRes.data);
+        setRagSources(sourcesRes.data);
+      } catch (e) {
+        console.log("RAG info fetch error", e);
+      }
+    };
+    fetchRagInfo();
+  }, [user?.username, activeSection]);
+
+  const sendChatMessage = async (overridePrompt = null, overrideContext = null) => {
+    const messageToSend = (overridePrompt || chatInput).trim();
+    if (!messageToSend || chatLoading) return;
+
+    const activeCtx = overrideContext || chatContext;
+    const userMsgId = `user_${Date.now()}`;
+    const newMsg = { id: userMsgId, role: "user", text: messageToSend };
+
+    setChatMessages((prev) => [...prev, newMsg]);
+    if (!overridePrompt) setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/api/rag/chat`,
+        { message: messageToSend, context: activeCtx },
+        { headers: { "X-User-Id": user?.username || "guest" } }
+      );
+      const data = response.data?.data || {};
+      const assistantMsg = {
+        id: `assistant_${Date.now()}`,
+        role: "assistant",
+        text: data.response || "No response received.",
+        citations: data.citations || [],
+        context_used: data.context_used,
+        grounded: data.grounded,
+      };
+      setChatMessages((prev) => [...prev, assistantMsg]);
+    } catch (err) {
+      const errorMsg = {
+        id: `err_${Date.now()}`,
+        role: "assistant",
+        text: `Error connecting to RAG service: ${err.response?.data?.error || err.message}`,
+        citations: [],
+      };
+      setChatMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleClearConversation = async () => {
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/rag/clear-conversation`,
+        {},
+        { headers: { "X-User-Id": user?.username || "guest" } }
+      );
+    } catch (e) {
+      console.log("Clear conversation error", e);
+    }
+    setChatMessages([
+      {
+        id: `intro_${Date.now()}`,
+        role: "assistant",
+        text: "Conversation cleared. How can I help you today with your resume or career questions?",
+        citations: [],
+      },
+    ]);
+  };
 
   const currentScore = result?.ats_score ?? 78;
   const hasAnalysis = Boolean(result?.metadata);
@@ -466,6 +560,7 @@ function App() {
           <button className="primaryButton" onClick={() => user ? document.getElementById("resume-file")?.click() : setAuthMode("login")}>
             {user ? "Upload resume" : "Sign in to start"}
           </button>
+          <button className="secondaryButton" onClick={() => setActiveSection("assistant")}>AI Assistant</button>
           <button className="secondaryButton" onClick={() => setActiveSection("action-plan")}>View plan</button>
         </div>
       </section>
@@ -749,7 +844,181 @@ function App() {
     );
   };
 
+  const renderAssistant = () => {
+    const isOllamaOnline = Boolean(ragStatus?.llm?.available);
+    const isVdbOnline = Boolean(ragStatus?.vector_database?.available);
+    const resumeCount = ragSources?.resumes?.length || 0;
+    const jobCount = ragSources?.jobs?.length || 0;
+
+    const suggestedPrompts = [
+      "What technical skills do I have in my resume?",
+      "Summarize my educational background.",
+      "What projects did I complete and what tools were used?",
+      "What are my strongest qualifications?",
+      "Draft a recruiter introduction pitch using my actual qualifications.",
+      "Explain how to prepare for technical interviews using the STAR method.",
+      "What is the difference between WHERE and HAVING in SQL?",
+    ];
+
+    return (
+      <div className="assistantWorkspace">
+        <section className="dashboardHero">
+          <div>
+            <span className="eyebrow">RAG Career Copilot</span>
+            <h2>ResumeNova AI Assistant</h2>
+            <p>
+              Evidence-grounded conversational assistant powered by local inference and vector retrieval.
+              Answers are strictly grounded in your uploaded resume and vetted career knowledge with source citations.
+            </p>
+          </div>
+          <div className="heroActions">
+            <button className="secondaryButton" onClick={handleClearConversation}>Clear conversation</button>
+            <button className="primaryButton" onClick={openUploadFlow}>
+              {resumeCount > 0 ? "Upload another resume" : "Upload resume to index"}
+            </button>
+          </div>
+        </section>
+
+        <section className="ragStatusBanner">
+          <div className="ragStatusBadges">
+            <span className="ragBadge">
+              <span className={`ragBadgeDot ${isVdbOnline ? "active" : "warning"}`} />
+              ChromaDB: {isVdbOnline ? "Online" : "Offline"}
+            </span>
+            <span className="ragBadge">
+              <span className={`ragBadgeDot ${isOllamaOnline ? "active" : "warning"}`} />
+              LLM: {isOllamaOnline ? `Ollama (${ragStatus?.config?.model || "qwen3:8b"})` : "Local Grounded Engine"}
+            </span>
+            <span className="ragBadge">
+              <span className={`ragBadgeDot ${resumeCount > 0 ? "active" : ""}`} />
+              Resume Context: {resumeCount > 0 ? `${resumeCount} Indexed` : "None"}
+            </span>
+            <span className="ragBadge">
+              <span className={`ragBadgeDot ${jobCount > 0 ? "active" : ""}`} />
+              Job Context: {jobCount > 0 ? `${jobCount} Stored` : "None"}
+            </span>
+          </div>
+          <span style={{ fontSize: "0.82rem", color: "var(--muted)" }}>
+            Isolated workspace for: <strong>{user?.username || "Guest"}</strong>
+          </span>
+        </section>
+
+        <div className="chatInterfaceCard">
+          <div className="chatHeaderBar">
+            <div className="contextSelector">
+              <button
+                className={`contextButton ${chatContext === "auto" ? "active" : ""}`}
+                onClick={() => setChatContext("auto")}
+              >
+                Auto Context
+              </button>
+              <button
+                className={`contextButton ${chatContext === "resume" ? "active" : ""}`}
+                onClick={() => setChatContext("resume")}
+              >
+                My Resume Only
+              </button>
+              <button
+                className={`contextButton ${chatContext === "job" ? "active" : ""}`}
+                onClick={() => setChatContext("job")}
+              >
+                Job Description
+              </button>
+              <button
+                className={`contextButton ${chatContext === "career" ? "active" : ""}`}
+                onClick={() => setChatContext("career")}
+              >
+                Career Guides
+              </button>
+            </div>
+            <button className="secondaryButton" style={{ padding: "6px 12px", fontSize: "0.8rem" }} onClick={handleClearConversation}>
+              Reset chat
+            </button>
+          </div>
+
+          <div className="chatMessagesContainer">
+            {chatMessages.length === 1 && (
+              <div className="chatEmptyNotice">
+                <h3>Ask anything grounded in your documents</h3>
+                <p>
+                  Click any suggested prompt below or type your own question. The AI Assistant will retrieve relevant
+                  chunks from your resume or career knowledge before responding.
+                </p>
+                <div className="suggestedPrompts">
+                  {suggestedPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      className="promptPill"
+                      onClick={() => sendChatMessage(prompt)}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chatMessages.map((msg) => (
+              <div key={msg.id} className={`chatBubble ${msg.role}`}>
+                <div>
+                  {msg.text.split("\n").map((line, idx) => (
+                    <p key={idx} style={{ margin: line ? "4px 0" : "8px 0" }}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+
+                {msg.citations && msg.citations.length > 0 && (
+                  <div className="citationList">
+                    {msg.citations.map((c, i) => (
+                      <span key={i} className="citationBadge" title={`Similarity: ${Math.round(c.similarity * 100)}%`}>
+                        {c.label || `[${c.source} | ${c.section}]`}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {chatLoading && (
+              <div className="chatTypingIndicator">
+                <span>Searching vector database & synthesizing response...</span>
+              </div>
+            )}
+          </div>
+
+          <form
+            className="chatInputSection"
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendChatMessage();
+            }}
+          >
+            <input
+              className="chatTextInput"
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask about your skills, education, projects, interview questions, or job fit..."
+              disabled={chatLoading}
+            />
+            <button
+              className="primaryButton"
+              type="submit"
+              disabled={chatLoading || !chatInput.trim()}
+            >
+              {chatLoading ? "Sending..." : "Send"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   const renderFeature = () => {
+    if (activeSection === "assistant") {
+      return renderAssistant();
+    }
     if (activeSection === "interviews") {
       if (!hasAnalysis) return renderPreviewFeature("interviews");
       return (

@@ -3,7 +3,7 @@ import os
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from routes import auth_bp, github_bp, health_bp, resume_bp
+from routes import auth_bp, github_bp, health_bp, resume_bp, rag_bp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_BUILD_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "build"))
@@ -17,6 +17,7 @@ app.register_blueprint(resume_bp, url_prefix="/api/resume")
 app.register_blueprint(health_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
 app.register_blueprint(github_bp, url_prefix="/api/github")
+app.register_blueprint(rag_bp, url_prefix="/api/rag")
 
 
 def get_home_payload():
@@ -41,6 +42,10 @@ def get_home_payload():
             "Download analysis report as PDF",
             "Resume history page",
             "Dark/light mode",
+            "RAG AI Assistant",
+            "Semantic Resume Q&A",
+            "Evidence-grounded Job Gap Analysis",
+            "Career Knowledge Base",
         ],
         "dashboard_layout": {
             "top": "ATS Score Card | Skills Found | Missing Keywords | Suggested Role",
@@ -58,6 +63,12 @@ def get_home_payload():
             "github_callback": "/api/github/callback",
             "github_connect": "/api/github/connect",
             "health": "/api/health",
+            "rag_chat": "/api/rag/chat",
+            "rag_ingest": "/api/rag/ingest",
+            "rag_status": "/api/rag/status",
+            "rag_sources": "/api/rag/sources",
+            "rag_job_analysis": "/api/rag/job-analysis",
+            "rag_interview_prep": "/api/rag/interview-preparation",
         },
     }
 

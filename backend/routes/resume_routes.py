@@ -98,6 +98,25 @@ def upload_resume():
         "Add project tech stack clearly."
     ]
 
+    # Safe RAG ingestion
+    user_id = request.form.get("user_id") or request.headers.get("X-User-Id") or request.headers.get("X-Username") or "guest"
+    rag_meta = {"indexed": False}
+    try:
+        from services.rag.resume_rag import PersonalResumeRAG
+        resume_rag = PersonalResumeRAG()
+        rag_result = resume_rag.ingest_resume(
+            user_id=user_id,
+            file_input=text.encode("utf-8"),
+            filename=file.filename or "uploaded_resume.pdf"
+        )
+        rag_meta = {
+            "indexed": True,
+            "source_id": rag_result.get("source_id"),
+            "chunk_count": rag_result.get("chunk_count", 0),
+        }
+    except Exception as re_err:
+        rag_meta = {"indexed": False, "reason": str(re_err)}
+
     feature_metadata = build_resume_metadata(
         text=text,
         skills=skills,
@@ -161,6 +180,7 @@ def upload_resume():
             "recommendations": recommendations,
             "resume_preview": text[:900]
         },
+        "rag": rag_meta,
         "metadata": feature_metadata,
         "ui": ui_meta
     }
@@ -195,7 +215,21 @@ def job_match():
         "No known technical keywords were detected in the job description."
     )
 
-    return jsonify({
+    # Optional RAG semantic gap comparison
+    user_id = request.headers.get("X-User-Id") or request.headers.get("X-Username") or payload.get("user_id") or "guest"
+    rag_comparison = None
+    try:
+        from services.rag.job_rag import JobDescriptionRAG
+        j_rag = JobDescriptionRAG()
+        rag_comparison = j_rag.compare_job_with_resume(
+            user_id=user_id,
+            job_text=job_description,
+            resume_skills=resume_skills
+        )
+    except Exception:
+        rag_comparison = None
+
+    response_data = {
         "success": True,
         "matched_skills": matched,
         "missing_skills": missing,
@@ -204,5 +238,12 @@ def job_match():
         "summary": summary,
         "keyword_plan": keyword_plan,
         "total_job_skills": len(job_skills),
-        "recommendation": "Great alignment!" if not missing else f"Add evidence for {len(missing)} missing skills."
-    })
+        "recommendation": "Great alignment!" if not missing else f"Add evidence for {len(missing)} missing skills.",
+    }
+
+    if rag_comparison:
+        response_data["evidence"] = rag_comparison.get("evidence", [])
+        response_data["learning_roadmap"] = rag_comparison.get("learning_roadmap", [])
+        response_data["improvement_suggestions"] = rag_comparison.get("resume_improvement_suggestions", [])
+
+    return jsonify(response_data)
