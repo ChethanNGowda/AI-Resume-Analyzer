@@ -71,12 +71,13 @@ def login():
 
     user = USERS.get(username)
     if not user:
-        username_from_email = next(
-            (stored_username for stored_username, stored_user in USERS.items() if stored_user["email"].lower() == username.lower()),
+        matched_username = next(
+            (stored_username for stored_username, stored_user in USERS.items()
+             if stored_username.lower() == username.lower() or stored_user.get("email", "").lower() == username.lower()),
             None
         )
-        if username_from_email:
-            username = username_from_email
+        if matched_username:
+            username = matched_username
             user = USERS[username]
 
     if not user or not check_password_hash(user["password"], password):
@@ -92,6 +93,15 @@ def login():
 def profile(username):
     username = username.strip()
     user = USERS.get(username)
+    if not user:
+        matched_username = next(
+            (stored_username for stored_username in USERS if stored_username.lower() == username.lower()),
+            None
+        )
+        if matched_username:
+            username = matched_username
+            user = USERS[username]
+
     if not user:
         return jsonify({"error": "User profile not found.", "profile_verified": False}), 404
 

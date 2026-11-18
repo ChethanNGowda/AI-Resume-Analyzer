@@ -40,6 +40,15 @@ def test_auth_login_existing_users(client):
     assert data["username"] == "user"
     assert data["role"] == "user"
 
+    # Test chethang387 admin login
+    res_admin = client.post("/api/auth/login", json={"username": "chethang387", "password": "12345678"})
+    assert res_admin.status_code == 200
+    assert res_admin.get_json()["role"] == "admin"
+
+    # Test case-insensitive login (e.g., 'User' or 'ChethanG387')
+    res_case = client.post("/api/auth/login", json={"username": "ChethanG387", "password": "12345678"})
+    assert res_case.status_code == 200
+
     # Test invalid password
     res_bad = client.post("/api/auth/login", json={"username": "user", "password": "wrongpassword"})
     assert res_bad.status_code == 401

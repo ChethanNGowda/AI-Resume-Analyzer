@@ -2,7 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:5000";
+const getApiBaseUrl = () => {
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL;
+  if (typeof window !== "undefined") {
+    if (window.location.port === "5000") return "";
+    const host = window.location.hostname || "localhost";
+    return `http://${host}:5000`;
+  }
+  return "http://localhost:5000";
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", mark: "D" },
@@ -118,41 +128,6 @@ function App() {
       localStorage.removeItem("resumeAppState");
     }
   }, [user, isAdmin, uploadHistory, uploadCount, result]);
-
-  useEffect(() => {
-    const completeGitHubLogin = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get("code");
-      if (window.location.pathname !== "/auth/github/callback" || !code) return;
-
-      setLoading(true);
-      try {
-        const response = await axios.post(`${API_BASE_URL}/api/github/callback`, { code });
-        setUser({
-          username: response.data.username,
-          display_name: response.data.display_name,
-          initials: response.data.initials,
-          email: response.data.email,
-          role: response.data.role,
-          githubUsername: response.data.github_username,
-          subscription: response.data.subscription,
-          profile_verified: response.data.profile_verified,
-          verified_by: response.data.verified_by,
-        });
-        setIsAdmin(response.data.role === "admin");
-        setAuthMode(null);
-        setError("");
-        window.history.replaceState({}, document.title, "/");
-      } catch (err) {
-        setAuthMode("login");
-        setError(err.response?.data?.error || "GitHub login failed. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    completeGitHubLogin();
-  }, []);
 
   useEffect(() => {
     const verifySavedProfile = async () => {
@@ -367,8 +342,12 @@ function App() {
       return;
     }
     setLoading(true);
+    setError("");
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, { username, password });
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+        username: username.trim(),
+        password: password.trim(),
+      });
       setUser({
         username: response.data.username,
         display_name: response.data.display_name,
@@ -385,7 +364,11 @@ function App() {
       setPassword("");
       setError("");
     } catch (err) {
-      setError(err.response?.data?.error || "Login failed. Try demo user: user / user123.");
+      if (!err.response) {
+        setError("Cannot connect to backend server. Make sure Python Flask is running: `cd backend && python app.py`.");
+      } else {
+        setError(err.response?.data?.error || "Login failed. Check your username and password.");
+      }
     } finally {
       setLoading(false);
     }
@@ -397,25 +380,21 @@ function App() {
       return;
     }
     setLoading(true);
+    setError("");
     try {
-      await axios.post(`${API_BASE_URL}/api/auth/register`, { username, password });
+      await axios.post(`${API_BASE_URL}/api/auth/register`, {
+        username: username.trim(),
+        password: password.trim(),
+      });
       setError("");
       setAuthMode("login");
     } catch (err) {
-      setError(err.response?.data?.error || "Registration failed.");
+      if (!err.response) {
+        setError("Cannot connect to backend server. Make sure Python Flask is running: `cd backend && python app.py`.");
+      } else {
+        setError(err.response?.data?.error || "Registration failed.");
+      }
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGitHubLogin = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/github/login`);
-      window.location.assign(response.data.auth_url);
-    } catch (err) {
-      setError(err.response?.data?.error || "GitHub login is unavailable right now.");
       setLoading(false);
     }
   };
@@ -1203,19 +1182,40 @@ function App() {
         <div className="modalBackdrop" onClick={() => setAuthMode(null)}>
           <div className="modalCard" onClick={(e) => e.stopPropagation()}>
             <h2>{authMode === "login" ? "Login" : "Create Account"}</h2>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" />
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" />
-            {error && <div className="alertBox alertError">{error}</div>}
-            <div className="modalButtons">
-              <button className="primaryButton" onClick={authMode === "login" ? handleLogin : handleRegister} disabled={loading}>{loading ? "Please wait..." : authMode === "login" ? "Login" : "Register"}</button>
-              <button className="secondaryButton" onClick={() => setAuthMode(null)}>Cancel</button>
-            </div>
-            <div className="authDivider"><span>or</span></div>
-            <button className="githubButton" onClick={handleGitHubLogin} disabled={loading}>Continue with GitHub</button>
+            <form onSubmit={(e) => { e.preventDefault(); authMode === "login" ? handleLogin() : handleRegister(); }}>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username or email"
+                autoComplete="username"
+              />
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type="password"
+                placeholder="Password"
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              />
+              {error && <div className="alertBox alertError">{error}</div>}
+              <div className="modalButtons">
+                <button type="submit" className="primaryButton" disabled={loading}>
+                  {loading ? "Please wait..." : authMode === "login" ? "Login" : "Register"}
+                </button>
+                <button type="button" className="secondaryButton" onClick={() => setAuthMode(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
             <p className="loginHint">
-              {authMode === "login" ? "Demo: user / user123" : "Use at least 8 characters for password."}
-              <button className="linkButton" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setError(""); }}>
-                {authMode === "login" ? " Create account" : " Login instead"}
+              {authMode === "login" ? (
+                <>Demo: <strong>chethang387</strong> / <code>12345678</code> or <strong>user</strong> / <code>user123</code></>
+              ) : (
+                "Password must be at least 8 characters long."
+              )}
+            </p>
+            <p className="loginHint">
+              <button className="linkButton" type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setError(""); }}>
+                {authMode === "login" ? "Don't have an account? Create account" : "Already have an account? Login instead"}
               </button>
             </p>
           </div>
