@@ -1,17 +1,14 @@
-﻿from flask import Blueprint, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
+
+from flask import Blueprint, jsonify, request, session
 from werkzeug.security import generate_password_hash, check_password_hash
 
 auth_bp = Blueprint("auth", __name__)
 
-# In-memory user store (would be a database in production)
-# Storing hashed passwords and using usernames instead of emails
-USERS = {
-    "admin": {"password": generate_password_hash("admin123"), "role": "admin", "subscription": "go", "email": "admin@example.com"},
-    "manager": {"password": generate_password_hash("manager123"), "role": "admin", "subscription": "go", "email": "manager@example.com"},
-    "user": {"password": generate_password_hash("user123"), "role": "user", "subscription": "free", "email": "user@example.com"},
-    "chethang387": {"password": generate_password_hash("12345678"), "role": "admin", "subscription": "go", "email": "chethang387@gmail.com"},
-}
+# Runtime-only account store: passwords are hashed and no demo credentials ship publicly.
+# Render Free has ephemeral storage; accounts reset when the service restarts or redeploys.
+USERS = {}
 
 
 def public_profile(username, user):
@@ -27,98 +24,68 @@ def public_profile(username, user):
         "subscription": user["subscription"],
         "github_username": user.get("github_username"),
         "profile_verified": True,
-        "verified_by": "backend-auth-store",
+        "verified_by": "server-session",
     }
+
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
     payload = request.get_json(silent=True) or {}
-    username = payload.get("username", "").strip()
-    password = payload.get("password", "").strip()
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
 
-    if not username or not password:
-        return jsonify({"error": "Username and password required."}), 400
-
-    if len(password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters long."}), 400
-
-    if username in USERS:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+        return jsonify({"error": "Username must be 3–32 characters and use only letters, numbers, dots, underscores, or hyphens."}), 400
+    if len(password) < 12:
+        return jsonify({"error": "Password must be at least 12 characters long."}), 400
+    if username.lower() in (name.lower() for name in USERS):
         return jsonify({"error": "Username already exists."}), 409
 
-    # For now, new users are standard users with free subscription
     USERS[username] = {
         "password": generate_password_hash(password),
         "role": "user",
         "subscription": "free",
-        "email": f"{username}@example.com" # Mock email
+        "email": f"{username}@example.invalid",
     }
-    return jsonify({
-        "success": True,
-        "message": "User registered successfully.",
-        "username": username,
-        "role": "user",
-        "subscription": "free"
-    }), 201
+    return jsonify({"success": True, "message": "Account created. Please sign in.", "username": username}), 201
+
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
     payload = request.get_json(silent=True) or {}
-    username = payload.get("username", "").strip()
-    password = payload.get("password", "").strip()
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
 
-    if not username or not password:
-        return jsonify({"error": "Username and password required."}), 400
-
-    user = USERS.get(username)
-    if not user:
-        matched_username = next(
-            (stored_username for stored_username, stored_user in USERS.items()
-             if stored_username.lower() == username.lower() or stored_user.get("email", "").lower() == username.lower()),
-            None
-        )
-        if matched_username:
-            username = matched_username
-            user = USERS[username]
-
+    matched_username = next((name for name in USERS if name.lower() == username.lower()), None)
+    user = USERS.get(matched_username) if matched_username else None
     if not user or not check_password_hash(user["password"], password):
         return jsonify({"error": "Invalid username or password."}), 401
 
-    return jsonify({
-        **public_profile(username, user),
-        "loginTime": datetime.now().isoformat()
-    })
+    session.clear()
+    session.permanent = True
+    session["user_id"] = matched_username
+    return jsonify({**public_profile(matched_username, user), "loginTime": datetime.now().isoformat()})
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"success": True, "message": "Signed out."})
 
 
 @auth_bp.route("/profile/<username>", methods=["GET"])
 def profile(username):
-    username = username.strip()
-    user = USERS.get(username)
+    current_user = session.get("user_id")
+    if not current_user or current_user.lower() != username.strip().lower():
+        return jsonify({"error": "Authentication required.", "profile_verified": False}), 401
+    user = USERS.get(current_user)
     if not user:
-        matched_username = next(
-            (stored_username for stored_username in USERS if stored_username.lower() == username.lower()),
-            None
-        )
-        if matched_username:
-            username = matched_username
-            user = USERS[username]
+        session.clear()
+        return jsonify({"error": "Session expired. Please register again.", "profile_verified": False}), 401
+    return jsonify(public_profile(current_user, user))
 
-    if not user:
-        return jsonify({"error": "User profile not found.", "profile_verified": False}), 404
-
-    return jsonify(public_profile(username, user))
 
 @auth_bp.route("/subscribe", methods=["POST"])
 def subscribe():
-    payload = request.get_json(silent=True) or {}
-    username = payload.get("username", "").strip() # Changed from email to username
-    plan = payload.get("plan", "free")
-
-    if username not in USERS:
-        return jsonify({"error": "User not found."}), 404
-
-    USERS[username]["subscription"] = plan
-    return jsonify({
-        "success": True,
-        "message": f"Upgraded to {plan} plan.",
-        "subscription": plan
-    })
+    # Plan changes must be backed by a real payment/entitlement provider.
+    return jsonify({"error": "Subscription changes are not enabled on this deployment."}), 403
