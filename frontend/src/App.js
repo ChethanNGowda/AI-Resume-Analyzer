@@ -191,7 +191,9 @@ function App() {
       const errorMsg = {
         id: `err_${Date.now()}`,
         role: "assistant",
-        text: `Error connecting to RAG service: ${err.response?.data?.error || err.message}`,
+        text: err.response?.status === 401
+          ? "⚠️ Please log in to use the AI Assistant."
+          : `Error: ${err.response?.data?.error || err.message}`,
         citations: [],
       };
       setChatMessages((prev) => [...prev, errorMsg]);

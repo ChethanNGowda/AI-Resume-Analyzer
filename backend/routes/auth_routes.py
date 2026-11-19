@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 import re
 
 from flask import Blueprint, jsonify, request, session
@@ -9,6 +10,17 @@ auth_bp = Blueprint("auth", __name__)
 # Runtime-only account store: passwords are hashed and no demo credentials ship publicly.
 # Render Free has ephemeral storage; accounts reset when the service restarts or redeploys.
 USERS = {}
+
+# Seed a default dev account from env vars if provided (keeps session alive across restarts)
+_DEFAULT_USER = os.getenv("DEFAULT_USERNAME", "")
+_DEFAULT_PASS = os.getenv("DEFAULT_PASSWORD", "")
+if _DEFAULT_USER and _DEFAULT_PASS:
+    USERS[_DEFAULT_USER] = {
+        "password": generate_password_hash(_DEFAULT_PASS),
+        "role": "user",
+        "subscription": "free",
+        "email": f"{_DEFAULT_USER}@local.dev",
+    }
 
 
 def public_profile(username, user):
