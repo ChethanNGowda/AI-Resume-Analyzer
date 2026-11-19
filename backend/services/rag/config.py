@@ -16,8 +16,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 class RAGConfig:
     # Ollama LLM Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-    RAG_LLM_MODEL: str = os.getenv("RAG_LLM_MODEL", "qwen3:8b")
-    OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "45"))
+    RAG_LLM_MODEL: str = os.getenv("RAG_LLM_MODEL", "qwen3.5:4b")
+    OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
     # Embeddings Configuration
     RAG_EMBEDDING_MODEL: str = os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
@@ -29,7 +29,7 @@ class RAGConfig:
     RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
     RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))
     RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
-    RAG_SIMILARITY_THRESHOLD: float = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.35"))
+    RAG_SIMILARITY_THRESHOLD: float = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.15"))
 
     # Vector DB storage directory
     _db_path = os.getenv("RAG_VECTOR_DB_PATH", "backend/data/chroma")

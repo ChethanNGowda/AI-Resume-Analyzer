@@ -222,8 +222,6 @@ class VectorStoreService:
                 distances = results["distances"][0] if results.get("distances") else [0.0] * len(ids)
 
                 for cid, doc, meta, dist in zip(ids, docs, metas, distances):
-                    # Chroma cosine distance: cosine_sim = 1 - distance
-                    # For normalized embeddings with cosine space, distance in [0, 2]
                     similarity = round(max(0.0, 1.0 - float(dist)), 4)
                     if similarity >= threshold:
                         hits.append({
@@ -233,6 +231,18 @@ class VectorStoreService:
                             "similarity": similarity,
                             "distance": round(float(dist), 4),
                         })
+
+                # Fallback: if strict threshold was too high, take top matches if distance is reasonable
+                if not hits and len(ids) > 0:
+                    for cid, doc, meta, dist in zip(ids[:3], docs[:3], metas[:3], distances[:3]):
+                        if float(dist) < 1.05:
+                            hits.append({
+                                "chunk_id": cid,
+                                "text": doc,
+                                "metadata": meta,
+                                "similarity": round(max(0.0, 1.0 - float(dist)), 4),
+                                "distance": round(float(dist), 4),
+                            })
 
             # Sort by similarity descending
             hits.sort(key=lambda x: x["similarity"], reverse=True)

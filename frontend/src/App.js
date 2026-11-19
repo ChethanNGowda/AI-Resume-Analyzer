@@ -175,7 +175,7 @@ function App() {
       const response = await axios.post(
         `${API_BASE_URL}/api/rag/chat`,
         { message: messageToSend, context: activeCtx },
-        { headers: { "X-User-Id": user?.username || "guest" } }
+        { headers: { "X-User-Id": user?.username || "guest" }, timeout: 180000 }
       );
       const data = response.data?.data || {};
       const assistantMsg = {
@@ -959,7 +959,7 @@ function App() {
 
             {chatLoading && (
               <div className="chatTypingIndicator">
-                <span>Searching vector database & synthesizing response...</span>
+                <span>🤔 AI is thinking… local model may take up to 90s, please wait</span>
               </div>
             )}
           </div>
@@ -984,7 +984,7 @@ function App() {
               type="submit"
               disabled={chatLoading || !chatInput.trim()}
             >
-              {chatLoading ? "Sending..." : "Send"}
+              {chatLoading ? "Thinking..." : "Send"}
             </button>
           </form>
         </div>

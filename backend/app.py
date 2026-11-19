@@ -1,5 +1,6 @@
 import os
 import secrets
+import threading
 from datetime import timedelta
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -120,4 +121,20 @@ def frontend_routes(path):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Pre-warm embedding model so first chat request is fast
+    def _prewarm_embedding():
+        try:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            from services.rag.embedding_service import EmbeddingService
+            e = EmbeddingService.get_instance()
+            e.embed_text("warmup query")
+            print("[Startup] ✅ Embedding model pre-warmed and ready.", flush=True)
+        except Exception as ex:
+            print(f"[Startup] ⚠️  Embedding pre-warm failed: {ex}", flush=True)
+
+    # Only run in the reloader child process (avoids double-load with debug=True)
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not os.environ.get("WERKZEUG_RUN_MAIN"):
+        threading.Thread(target=_prewarm_embedding, daemon=True).start()
+
+    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)

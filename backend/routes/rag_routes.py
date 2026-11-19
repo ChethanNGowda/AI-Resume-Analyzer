@@ -25,6 +25,10 @@ assistant_service = AssistantService()
 resume_rag = PersonalResumeRAG()
 job_rag = JobDescriptionRAG()
 career_service = CareerKnowledgeService()
+try:
+    career_service.initialize_knowledge_base()
+except Exception as _e:
+    logger.warning(f"Could not auto-initialize career knowledge base: {_e}")
 vector_store = VectorStoreService.get_instance()
 llm_service = LLMService()
 

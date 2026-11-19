@@ -5,6 +5,7 @@ Interfaces with local Ollama instance (default model: qwen3:8b) with graceful fa
 
 import logging
 import json
+import re
 from typing import Dict, List, Optional
 import requests
 
@@ -24,6 +25,32 @@ class LLMService:
         self.model_name = RAGConfig.RAG_LLM_MODEL
         self.timeout = RAGConfig.OLLAMA_TIMEOUT
 
+    def _resolve_model_name(self, installed_models: List[str]) -> str:
+        """
+        Resolve the best matching model from installed Ollama models.
+        Matches exact name, prefix, or common variations like qwen3.5:4b.
+        """
+        if not installed_models:
+            return self.model_name
+
+        # Exact match
+        if self.model_name in installed_models:
+            return self.model_name
+
+        # Match base name prefix (e.g. qwen3.5 or qwen)
+        clean_target = self.model_name.lower().replace(" ", "").replace("-", "")
+        for m in installed_models:
+            clean_m = m.lower().replace(" ", "").replace("-", "")
+            if clean_target in clean_m or clean_m.split(":")[0] in clean_target:
+                return m
+
+        # Match any installed text generation model (ignore embed models)
+        for m in installed_models:
+            if "embed" not in m.lower():
+                return m
+
+        return self.model_name
+
     def check_health(self) -> Dict:
         """
         Check if Ollama is reachable and check if target model is installed.
@@ -33,14 +60,14 @@ class LLMService:
             if resp.status_code == 200:
                 models_data = resp.json().get("models", [])
                 installed_models = [m.get("name", "") for m in models_data]
-                has_target_model = any(
-                    self.model_name in name or name.startswith(self.model_name.split(":")[0])
-                    for name in installed_models
-                )
+                resolved_model = self._resolve_model_name(installed_models)
+                has_target_model = resolved_model in installed_models
+
                 return {
                     "available": True,
                     "ollama_url": self.base_url,
                     "target_model": self.model_name,
+                    "resolved_model": resolved_model,
                     "target_model_installed": has_target_model,
                     "installed_models": installed_models,
                 }
@@ -70,12 +97,12 @@ class LLMService:
         citations = []
         context_text_parts = []
 
-        for idx, chunk in enumerate(context_chunks):
+        for idx, chunk in enumerate(context_chunks[:2]):  # max 2 chunks to keep prompt small
             meta = chunk.get("metadata", {})
             doc_name = meta.get("document_name", "Document")
             sec_hint = meta.get("section_hint", "General")
             page_num = meta.get("page_number", 1)
-            chunk_text = chunk.get("text", "").strip()
+            chunk_text = chunk.get("text", "").strip()[:300]  # cap at 300 chars
 
             citation_label = f"[{doc_name} | {sec_hint} (p.{page_num})]"
             citations.append({
@@ -91,54 +118,76 @@ class LLMService:
         formatted_context = "\n\n".join(context_text_parts) if context_text_parts else "No matching documents found."
 
         system_prompt = system_role or (
-            "You are ResumeNova's AI Career Assistant and Resume Coach.\n"
-            "CRITICAL RULES:\n"
-            "1. Answer strictly and solely using the provided retrieved context sources.\n"
-            "2. If the answer cannot be determined from the provided context, state clearly and honestly: "
-            "'This information is not present in your uploaded resume/documents.'\n"
-            "3. DO NOT invent, fabricate, or assume any qualifications, marks, projects, companies, skills, or dates.\n"
-            "4. Cite the source reference (e.g. [Document.pdf | Section]) whenever stating a specific fact.\n"
-            "5. Maintain an encouraging, professional, and actionable tone."
+            "You are an expert AI Career Assistant and Tech Mentor.\n"
+            "Answer ALL questions thoroughly. For technical topics (SQL, Python, System Design, etc.), "
+            "interview prep, and career advice, give detailed practical answers with examples. "
+            "Cite retrieved sources when available using [Document | Section]. "
+            "Be concise, clear, and actionable."
         )
+
+        context_block = ""
+        if formatted_context and formatted_context.strip() and formatted_context != "No matching documents found.":
+            context_block = f"=== RETRIEVED CONTEXT / EVIDENCE SOURCES ===\n{formatted_context}\n\n"
 
         full_prompt = (
             f"{system_prompt}\n\n"
-            f"=== RETRIEVED EVIDENCE SOURCES ===\n"
-            f"{formatted_context}\n\n"
+            f"{context_block}"
             f"=== USER QUESTION ===\n"
             f"{prompt}\n\n"
-            f"=== GROUNDED RESPONSE ==="
+            f"=== DETAILED RESPONSE ==="
         )
 
-        # Attempt Ollama inference
+        # Attempt Ollama inference (using streaming to avoid single large read timeout)
         health = self.check_health()
-        if health.get("available"):
+        if health.get("available") and health.get("target_model_installed"):
+            active_model = health.get("resolved_model") or self.model_name
             try:
                 payload = {
-                    "model": self.model_name,
+                    "model": active_model,
                     "prompt": full_prompt,
-                    "stream": False,
+                    "stream": True,  # Stream tokens to avoid ReadTimeout on long responses
+                    "think": False,
                     "options": {
-                        "temperature": 0.2,  # Low temperature for factual grounding
+                        "temperature": 0.3,
                         "top_p": 0.9,
+                        "num_ctx": 2048,     # Limit context window to keep generation fast
+                        "num_predict": 512,  # Cap response tokens (~400 words max)
                     }
                 }
-                resp = requests.post(
+                answer_parts = []
+                with requests.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
-                    timeout=self.timeout
-                )
-                if resp.status_code == 200:
-                    result = resp.json()
-                    answer = result.get("response", "").strip()
-                    if answer:
-                        return {
-                            "response": answer,
-                            "citations": citations,
-                            "model_used": self.model_name,
-                            "grounded": True,
-                            "llm_online": True,
-                        }
+                    timeout=self.timeout,
+                    stream=True
+                ) as resp:
+                    if resp.status_code == 200:
+                        for line in resp.iter_lines():
+                            if line:
+                                try:
+                                    chunk = json.loads(line)
+                                    token = chunk.get("response", "")
+                                    answer_parts.append(token)
+                                    if chunk.get("done", False):
+                                        break
+                                except json.JSONDecodeError:
+                                    continue
+
+                answer = "".join(answer_parts).strip()
+                # Strip reasoning / thinking tags if model outputs them
+                if "<think>" in answer and "</think>" in answer:
+                    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
+                if "...done thinking." in answer:
+                    answer = answer.split("...done thinking.")[-1].strip()
+
+                if answer:
+                    return {
+                        "response": answer,
+                        "citations": citations,
+                        "model_used": active_model,
+                        "grounded": True,
+                        "llm_online": True,
+                    }
             except Exception as e:
                 logger.warning(f"Ollama generation failed ({e}). Using deterministic grounded fallback.")
 

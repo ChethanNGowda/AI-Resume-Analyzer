@@ -107,28 +107,48 @@ class AssistantService:
             context_chunks = resume_hits + career_hits
             context_used = "hybrid"
 
-        # Check if we have sufficient evidence
-        if not context_chunks and context_used == "resume":
+        # Check if query is strictly personal to the user's specific uploaded resume
+        is_strictly_personal = any(w in clean_msg.lower() for w in [
+            "my resume", "my uploaded", "in my cv", "my gpa", "my grade", "my marks",
+            "my college", "my phone", "my email", "my address", "my projects on my resume"
+        ])
+
+        if not context_chunks and is_strictly_personal:
             sources = self.vector_store.list_sources(user_id=user_id, collection_type="resume")
             if not sources:
                 answer = (
-                    "No resume has been uploaded to your workspace yet. "
-                    "Please upload your resume PDF in the Dashboard so I can answer questions about your experience, "
-                    "skills, and projects."
+                    "You haven't uploaded a resume yet! Please upload your resume PDF in the Dashboard. "
+                    "In the meantime, feel free to ask me any interview, technical, or career preparation questions—I am happy to answer them!"
                 )
+                result = {
+                    "response": answer,
+                    "citations": [],
+                    "context_used": "resume",
+                    "grounded": False,
+                }
             else:
                 answer = (
-                    "I searched your uploaded resume, but could not find information addressing this question. "
-                    "This skill or experience does not appear to be listed in your resume."
+                    "I searched your uploaded resume, but could not find information addressing this specific question. "
+                    "If you'd like general advice on this topic or want to know how to prepare for an interview about it, just let me know!"
                 )
-            result = {
-                "response": answer,
-                "citations": [],
-                "context_used": "resume",
-                "grounded": True,
-            }
+                result = {
+                    "response": answer,
+                    "citations": [],
+                    "context_used": "resume",
+                    "grounded": True,
+                }
         else:
-            # Generate grounded response
+            # If resume context was empty, attempt to supplement from career knowledge
+            if not context_chunks:
+                context_chunks = self.career_service.search_career_knowledge(
+                    query=clean_msg,
+                    top_k=RAGConfig.RAG_TOP_K,
+                    similarity_threshold=0.20
+                )
+                if context_chunks:
+                    context_used = "career"
+
+            # Generate response via LLM
             system_role = self._build_system_role(intent)
             result = self.llm_service.generate_grounded_response(
                 prompt=clean_msg,
@@ -194,22 +214,19 @@ class AssistantService:
         return "hybrid"
 
     def _build_system_role(self, intent: str) -> str:
-        """Constructs persona and strict grounding directives based on intent."""
+        """Constructs persona and helpful directives based on intent."""
         base = (
-            "You are ResumeNova's AI Career Assistant and Resume Coach.\n"
-            "CRITICAL OPERATIONAL RULES:\n"
-            "1. Ground every answer in the retrieved context sources provided below.\n"
-            "2. Whenever mentioning a fact, cite the document name and section.\n"
-            "3. If facts are missing from the retrieved context, state clearly: "
-            "'This information is not present in the provided documents.'\n"
-            "4. NEVER fabricate qualifications, experience, companies, marks, or dates.\n"
-            "5. Keep responses structured, professional, and directly actionable."
+            "You are an expert AI Career Assistant, Interview Coach, and Tech Mentor.\n"
+            "Answer ALL questions clearly and thoroughly. For technical topics (SQL, Python, React, "
+            "System Design, DSA, etc.), interviews, behavioral questions, and career advice: give "
+            "detailed, practical answers with examples. Cite retrieved sources as [Doc | Section]. "
+            "Be concise, structured, and actionable."
         )
 
         if intent == "resume":
-            return base + "\nFocus on extracting and summarizing real qualifications from the user's resume."
+            return base + " Focus on personalized advice grounded in the candidate's actual qualifications."
         elif intent == "job":
-            return base + "\nFocus on comparing the job requirements against user resume evidence, highlighting matches and gaps honestly."
+            return base + " Compare job requirements against candidate skills; highlight matches and gaps."
         elif intent == "career":
-            return base + "\nFocus on sharing trusted software engineering, interview preparation, and placement strategies from the reference documents."
+            return base + " Provide top-notch technical explanations, interview answers, and career best practices."
         return base
