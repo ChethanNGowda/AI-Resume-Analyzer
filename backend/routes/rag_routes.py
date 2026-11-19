@@ -5,7 +5,8 @@ interview preparation, source management, and status monitoring.
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
+from security import require_login
 
 from services.rag.assistant_service import AssistantService
 from services.rag.career_knowledge import CareerKnowledgeService
@@ -29,31 +30,11 @@ llm_service = LLMService()
 
 
 def get_current_user_id() -> str:
-    """
-    Extracts authenticated user_id from headers, session token, or request payload.
-    Falls back to isolated client IP-based guest identifier to guarantee user-level partition.
-    """
-    # 1. Custom auth headers
-    user_header = request.headers.get("X-User-Id") or request.headers.get("X-Username")
-    if user_header and user_header.strip():
-        return user_header.strip().lower()
-
-    # 2. Check JSON payload if present
-    if request.is_json:
-        payload = request.get_json(silent=True) or {}
-        if payload.get("user_id"):
-            return str(payload.get("user_id")).strip().lower()
-        if payload.get("username"):
-            return str(payload.get("username")).strip().lower()
-
-    # 3. Form data if multipart
-    if request.form and request.form.get("user_id"):
-        return str(request.form.get("user_id")).strip().lower()
-
-    # 4. Fallback to IP-isolated guest identifier
-    client_ip = request.remote_addr or "guest"
-    safe_ip = client_ip.replace(":", "_").replace(".", "_")
-    return f"guest_{safe_ip}"
+    """Return the identity established by the signed server-side session."""
+    user_id = session.get("user_id")
+    if not user_id:
+        raise RuntimeError("Authentication required.")
+    return user_id
 
 
 @rag_bp.route("/status", methods=["GET"])
@@ -80,6 +61,7 @@ def rag_status():
 
 
 @rag_bp.route("/ingest", methods=["POST"])
+@require_login
 def ingest_document():
     """
     Ingest a resume or job description file (PDF, DOCX, TXT, MD) into user-isolated vector store.
@@ -134,6 +116,7 @@ def ingest_document():
 
 
 @rag_bp.route("/chat", methods=["POST"])
+@require_login
 def rag_chat():
     """
     Conversational AI Assistant endpoint.
@@ -164,6 +147,7 @@ def rag_chat():
 
 
 @rag_bp.route("/sources", methods=["GET"])
+@require_login
 def list_user_sources():
     """
     List all ingested documents for the authenticated user.
@@ -182,6 +166,7 @@ def list_user_sources():
 
 
 @rag_bp.route("/sources/<source_id>", methods=["DELETE"])
+@require_login
 def delete_user_source(source_id):
     """
     Delete a specific document and its vector embeddings for the current user.
@@ -200,6 +185,7 @@ def delete_user_source(source_id):
 
 
 @rag_bp.route("/job-analysis", methods=["POST"])
+@require_login
 def job_analysis():
     """
     Compare job description against user resume with evidence-backed citations.
@@ -225,6 +211,7 @@ def job_analysis():
 
 
 @rag_bp.route("/interview-preparation", methods=["POST"])
+@require_login
 def interview_preparation():
     """
     Generates interview questions grounded in the user's actual projects, skills, and target role.
@@ -269,6 +256,7 @@ def interview_preparation():
 
 
 @rag_bp.route("/clear-conversation", methods=["POST"])
+@require_login
 def clear_conversation():
     """Clear chat history for user session."""
     user_id = get_current_user_id()
@@ -277,6 +265,7 @@ def clear_conversation():
 
 
 @rag_bp.route("/career-topics", methods=["GET"])
+@require_login
 def list_career_topics():
     """List available curated career knowledge topics."""
     topics = career_service.list_topics()
