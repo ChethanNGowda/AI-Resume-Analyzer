@@ -1,4 +1,6 @@
 import os
+import secrets
+from datetime import timedelta
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -10,6 +12,14 @@ FRONTEND_BUILD_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "b
 FRONTEND_STATIC_DIR = os.path.join(FRONTEND_BUILD_DIR, "static")
 
 app = Flask(__name__, static_folder=FRONTEND_STATIC_DIR, static_url_path="/static")
+app.config.update(
+    SECRET_KEY=os.getenv("SECRET_KEY") or secrets.token_hex(32),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    MAX_CONTENT_LENGTH=8 * 1024 * 1024,
+)
 CORS(app)
 
 # Register blueprints

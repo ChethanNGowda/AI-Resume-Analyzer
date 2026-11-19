@@ -3,13 +3,11 @@ import axios from "axios";
 import "./App.css";
 
 const getApiBaseUrl = () => {
-  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL;
-  if (typeof window !== "undefined") {
-    if (window.location.port === "5000") return "";
-    const host = window.location.hostname || "localhost";
-    return `http://${host}:5000`;
+  // Production serves React and Flask from one origin; CRA's dev proxy handles local /api calls.
+  if (typeof process.env.REACT_APP_API_BASE_URL !== "undefined") {
+    return process.env.REACT_APP_API_BASE_URL;
   }
-  return "http://localhost:5000";
+  return "";
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -131,7 +129,7 @@ function App() {
 
   useEffect(() => {
     const verifySavedProfile = async () => {
-      if (!user?.username || user.profile_verified) return;
+      if (!user?.username) return;
       try {
         const response = await axios.get(`${API_BASE_URL}/api/auth/profile/${encodeURIComponent(user.username)}`);
         setUser((current) => ({ ...current, ...response.data }));
@@ -1207,11 +1205,7 @@ function App() {
               </div>
             </form>
             <p className="loginHint">
-              {authMode === "login" ? (
-                <>Demo: <strong>chethang387</strong> / <code>12345678</code> or <strong>user</strong> / <code>user123</code></>
-              ) : (
-                "Password must be at least 8 characters long."
-              )}
+              {authMode === "login" ? "Sign in with your account." : "Use a password with at least 12 characters."}
             </p>
             <p className="loginHint">
               <button className="linkButton" type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setError(""); }}>

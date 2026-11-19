@@ -3,7 +3,7 @@ import os
 from urllib.parse import urlencode
 
 import requests
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from werkzeug.security import generate_password_hash
 
 from routes.auth_routes import USERS, public_profile
@@ -139,6 +139,9 @@ def github_callback():
     github_user = user_response.json()
     email = _get_primary_email(access_token, github_user.get("email"))
     username, app_user = _find_or_create_user(github_user, email)
+    session.clear()
+    session.permanent = True
+    session["user_id"] = username
 
     return jsonify({
         **public_profile(username, app_user),
@@ -150,12 +153,15 @@ def github_callback():
 @github_bp.route("/connect", methods=["POST"])
 def connect_github():
     """Connect GitHub account to existing user."""
+    username = session.get("user_id")
+    if not username or username not in USERS:
+        return jsonify({"error": "Authentication required."}), 401
     payload = request.get_json(silent=True) or {}
-    email = payload.get("email", "")
-    github_username = payload.get("github_username", "")
-
-    if not email or not github_username:
-        return jsonify({"error": "Email and GitHub username required"}), 400
+    github_username = str(payload.get("github_username", "")).strip()
+    if not github_username:
+        return jsonify({"error": "GitHub username required"}), 400
+    USERS[username]["github_username"] = github_username
+    email = USERS[username].get("email", "")
 
     return jsonify({
         "success": True,
@@ -169,11 +175,11 @@ def connect_github():
 @github_bp.route("/disconnect", methods=["POST"])
 def disconnect_github():
     """Disconnect GitHub account from user."""
-    payload = request.get_json(silent=True) or {}
-    email = payload.get("email", "")
-
-    if not email:
-        return jsonify({"error": "Email required"}), 400
+    username = session.get("user_id")
+    if not username or username not in USERS:
+        return jsonify({"error": "Authentication required."}), 401
+    USERS[username].pop("github_username", None)
+    email = USERS[username].get("email", "")
 
     return jsonify({
         "success": True,

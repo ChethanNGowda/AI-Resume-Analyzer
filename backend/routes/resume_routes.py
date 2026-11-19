@@ -1,4 +1,5 @@
-﻿from flask import Blueprint, request, jsonify
+﻿from flask import Blueprint, request, jsonify, session
+from security import require_login
 from services.pdf_service import extract_pdf_text
 from services.skill_service import extract_skills
 from services.ats_service import calculate_ats
@@ -27,6 +28,7 @@ def resume_feature_metadata():
     })
 
 @resume_bp.route("/upload", methods=["POST"])
+@require_login
 def upload_resume():
     if "resume" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -99,7 +101,7 @@ def upload_resume():
     ]
 
     # Safe RAG ingestion
-    user_id = request.form.get("user_id") or request.headers.get("X-User-Id") or request.headers.get("X-Username") or "guest"
+    user_id = session["user_id"]
     rag_meta = {"indexed": False}
     try:
         from services.rag.resume_rag import PersonalResumeRAG
@@ -189,6 +191,7 @@ def upload_resume():
 
 
 @resume_bp.route("/job-match", methods=["POST"])
+@require_login
 def job_match():
     payload = request.get_json(silent=True) or {}
     resume_skills = payload.get("resume_skills") or []
@@ -216,7 +219,7 @@ def job_match():
     )
 
     # Optional RAG semantic gap comparison
-    user_id = request.headers.get("X-User-Id") or request.headers.get("X-Username") or payload.get("user_id") or "guest"
+    user_id = session["user_id"]
     rag_comparison = None
     try:
         from services.rag.job_rag import JobDescriptionRAG
